@@ -1,0 +1,55 @@
+# ==============================================================================
+# Multi-Service Orchestration for Postman API Automation Testing
+# ==============================================================================
+# Topology:
+#   - gateway-service: Single exposed entrypoint (Port 8080)
+#   - order-service: Internal business logic (Port 8081 - internal network only)
+#   - wiremock-service: Mock engine for downstream dependencies (Port 8080 - internal)
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  # 1. API Gateway & Auth Service (Node.js/Express)
+  gateway-service:
+    build:
+      context: ./services/gateway-service
+      dockerfile: Dockerfile
+    container_name: gateway-service
+    ports:
+      - "8080:8080" # Exposed to localhost for Postman/Newman execution
+    environment:
+      - PORT=8080
+      - JWT_SECRET=super_secret_jwt_key_12345
+      - ORDER_SERVICE_URL=http://order-service:8081
+      - PAYMENT_SERVICE_URL=http://wiremock-service:8080
+    depends_on:
+      - order-service
+      - wiremock-service
+    networks:
+      - microservices-net
+
+  # 2. Order Service (Node.js/Express)
+  order-service:
+    build:
+      context: ./services/order-service
+      dockerfile: Dockerfile
+    container_name: order-service
+    environment:
+      - PORT=8081
+      - JWT_SECRET=super_secret_jwt_key_12345
+    networks:
+      - microservices-net
+
+  # 3. WireMock (Third-Party / Downstream Dependency Mocking)
+  wiremock-service:
+    image: wiremock/wiremock:3.3.1
+    container_name: wiremock-service
+    volumes:
+      - ./services/wiremock/mappings:/home/wiremock/mappings:ro
+    networks:
+      - microservices-net
+
+networks:
+  microservices-net:
+    driver: bridge

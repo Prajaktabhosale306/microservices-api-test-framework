@@ -1,0 +1,355 @@
+{
+  "info": {
+    "name": "E2E Microservices Test Suite",
+    "description": "Production-grade automated test suite demonstrating dynamic JWT token handling, RFC 7807 contract validation, asynchronous workflow polling via setNextRequest, idempotency checks, and BOLA/IDOR security boundaries.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01_Authentication",
+      "item": [
+        {
+          "name": "Generate User A Token (Customer)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const res = pm.response.json();",
+                  "pm.test(\"Token response contains valid access_token & expires_in\", function () {",
+                  "    pm.expect(res).to.have.property('access_token');",
+                  "    pm.expect(res).to.have.property('expires_in');",
+                  "});",
+                  "",
+                  "// Cache token and compute expiry unix epoch (subtract 5s buffer)",
+                  "const expiryEpoch = Date.now() + ((res.expires_in - 5) * 1000);",
+                  "pm.environment.set(\"authToken\", res.access_token);",
+                  "pm.environment.set(\"tokenExpiryTimestamp\", expiryEpoch);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"username\": \"alpha_tester\",\n    \"userId\": \"{{userA_Id}}\",\n    \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "token"]
+            }
+          }
+        },
+        {
+          "name": "Generate User B Token (Attacker/Second Tenant)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "const res = pm.response.json();",
+                  "pm.environment.set(\"userB_Token\", res.access_token);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"username\": \"bravo_tenant\",\n    \"userId\": \"{{userB_Id}}\",\n    \"role\": \"CUSTOMER\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/auth/token",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "auth", "token"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02_Async_Order_Lifecycle",
+      "item": [
+        {
+          "name": "Create Order (Async 202)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Dynamic Trace & Correlation ID Injection",
+                  "pm.variables.set(\"correlationId\", 'corr-' + pm.variables.replaceIn('{{$guid}}'));",
+                  "pm.environment.set(\"pollRetryCount\", 0);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 202 Accepted (Async Processing Pattern)\", function () {",
+                  "    pm.response.to.have.status(202);",
+                  "});",
+                  "",
+                  "const res = pm.response.json();",
+                  "pm.test(\"Response returns initial PROCESSING state and orderId\", function () {",
+                  "    pm.expect(res.status).to.eql(\"PROCESSING\");",
+                  "    pm.expect(res).to.have.property(\"orderId\");",
+                  "});",
+                  "",
+                  "// Capture Order ID for subsequent lifecycle verification",
+                  "pm.environment.set(\"currentOrderId\", res.orderId);"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Correlation-ID", "value": "{{correlationId}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"items\": [\"SKU-MACBOOK-PRO\", \"SKU-MAGIC-MOUSE\"],\n    \"totalAmount\": 2499.00\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
+            }
+          }
+        },
+        {
+          "name": "Poll Order Status Until Confirmed",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const res = pm.response.json();",
+                  "let retries = parseInt(pm.environment.get(\"pollRetryCount\") || \"0\", 10);",
+                  "const maxRetries = parseInt(pm.environment.get(\"maxPollRetries\") || \"5\", 10);",
+                  "",
+                  "if (res.status === \"PROCESSING\" && retries < maxRetries) {",
+                  "    retries++;",
+                  "    pm.environment.set(\"pollRetryCount\", retries);",
+                  "    console.log(`Order status is PROCESSING. Retry attempt ${retries}/${maxRetries} in 1000ms...`);",
+                  "    setTimeout(() => {}, 1000);",
+                  "    pm.execution.setNextRequest(\"Poll Order Status Until Confirmed\");",
+                  "} else {",
+                  "    pm.test(\"Status code is 200 OK\", function () {",
+                  "        pm.response.to.have.status(200);",
+                  "    });",
+                  "    pm.test(\"Order successfully transitioned to CONFIRMED state\", function () {",
+                  "        pm.expect(res.status).to.eql(\"CONFIRMED\");",
+                  "    });",
+                  "    pm.test(\"Trace Correlation ID propagated correctly\", function () {",
+                  "        pm.expect(res.correlationId).to.eql(pm.variables.get(\"correlationId\"));",
+                  "    });",
+                  "    // Reset next request to continue regular sequential flow",
+                  "    pm.execution.setNextRequest(\"Validate Order JSON Schema Contract\");",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{currentOrderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{currentOrderId}}"]
+            }
+          }
+        },
+        {
+          "name": "Validate Order JSON Schema Contract",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const orderSchema = {",
+                  "  \"type\": \"object\",",
+                  "  \"required\": [\"orderId\", \"userId\", \"items\", \"totalAmount\", \"status\", \"createdAt\"],",
+                  "  \"properties\": {",
+                  "    \"orderId\": { \"type\": \"string\", \"pattern\": \"^ord_[a-f0-9]{8}$\" },",
+                  "    \"userId\": { \"type\": \"string\" },",
+                  "    \"items\": { \"type\": \"array\", \"minItems\": 1 },",
+                  "    \"totalAmount\": { \"type\": \"number\", \"minimum\": 0.01 },",
+                  "    \"status\": { \"type\": \"string\", \"enum\": [\"PROCESSING\", \"CONFIRMED\", \"CANCELLED\"] },",
+                  "    \"createdAt\": { \"type\": \"string\" },",
+                  "    \"correlationId\": { \"type\": \"string\" }",
+                  "  }",
+                  "};",
+                  "",
+                  "pm.test(\"Order payload strictly complies with JSON Schema contract\", function () {",
+                  "    pm.response.to.have.jsonSchema(orderSchema);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{currentOrderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{currentOrderId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03_Security_BOLA_RBAC",
+      "item": [
+        {
+          "name": "BOLA IDOR Check - User B Attempts Access to User A Order",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 403 Forbidden (BOLA/IDOR prevented)\", function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});",
+                  "",
+                  "const res = pm.response.json();",
+                  "pm.test(\"RFC 7807 problem details returned with error details\", function () {",
+                  "    pm.expect(res.status).to.eql(403);",
+                  "    pm.expect(res.title).to.eql(\"Forbidden\");",
+                  "    pm.expect(res.detail).to.include(\"permission\");",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{userB_Token}}" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{currentOrderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{currentOrderId}}"]
+            }
+          }
+        },
+        {
+          "name": "Unauthenticated Request Fails (401 Unauthorized)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 401 Unauthorized when Bearer token is absent\", function () {",
+                  "    pm.response.to.have.status(401);",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders/{{currentOrderId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders", "{{currentOrderId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04_Idempotency_Resilience",
+      "item": [
+        {
+          "name": "Execute Payment with Idempotency Key",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "// Generate static key to reuse for idempotency testing",
+                  "if (!pm.environment.get(\"fixedIdempotencyKey\")) {",
+                  "    pm.environment.set(\"fixedIdempotencyKey\", 'IDEMP-' + pm.variables.replaceIn('{{$guid}}'));",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 OK\", function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "const res = pm.response.json();",
+                  "pm.test(\"Payment captured with idempotency flag active\", function () {",
+                  "    pm.expect(res.status).to.eql(\"CAPTURED\");",
+                  "    pm.expect(res.idempotencyVerified).to.be.true;",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "X-Idempotency-Key", "value": "{{fixedIdempotencyKey}}" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n    \"orderId\": \"{{currentOrderId}}\",\n    \"amount\": 2499.00,\n    \"currency\": \"USD\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/payments/charge",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "payments", "charge"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RFC7807ProblemDetails",
+  "type": "object",
+  "required": ["type", "title", "status", "detail"],
+  "properties": {
+    "type": { "type": "string" },
+    "title": { "type": "string" },
+    "status": { "type": "integer" },
+    "detail": { "type": "string" },
+    "instance": { "type": "string" }
+  },
+  "additionalProperties": true
+}
