@@ -1,58 +1,92 @@
+# ==============================================================================
+# GitHub Actions CI/CD Pipeline: Distributed API Test Regression & Reporting
+# ==============================================================================
+# Workflow Lifecycle:
+#   1. Triggers on push or pull request to main/master branches.
+#   2. Spins up the microservices cluster (Gateway, Order, WireMock) via Docker Compose.
+#   3. Executes headless Postman tests using Newman CLI.
+#   4. Compiles an interactive HTML report via 'newman-reporter-htmlextra'.
+#   5. Automatically publishes the dashboard to GitHub Pages for instant viewing.
+# ==============================================================================
+
 name: API Microservices Regression CI
 
+# Define pipeline execution triggers
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
 
+# Security & Access: Grant minimum necessary permissions to GitHub Token
+# 'contents: write' allows the gh-pages action to push the built website branch
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
 jobs:
   api-automation-test:
     name: Build Services & Execute Newman Suite
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-latest # Standard Linux runner provided by GitHub
 
     steps:
-      # 1. Checkout the repository code
+      # Step 1: Pull repository code onto the runner
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # 2. Set up Node.js runtime environment
+      # Step 2: Configure Node.js runtime environment
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          cache: 'npm' # Caches npm packages to speed up consecutive CI runs
 
-      # 3. Install framework dependencies (Newman & htmlextra reporter)
-      - name: Install Root Dependencies
+      # Step 3: Install root development tools (Newman CLI and Reporters)
+      - name: Install Framework Dependencies
         run: npm ci || npm install
 
-      # 4. Spin up the multi-container cluster using Docker Compose
+      # Step 4: Orchestrate microservice containers
       - name: Spin up Microservices Cluster (Docker Compose)
         run: |
           docker compose up --build -d
-          echo "Waiting for Gateway service to become healthy..."
+          echo "Waiting for API Gateway to pass health check on port 8080..."
+          # Poll gateway /health endpoint for up to 30 seconds before timing out
           timeout 30s bash -c 'until curl -sf http://localhost:8080/health; do sleep 1; done'
-          echo "Services are UP and responding on port 8080."
+          echo "Cluster is healthy and ready for traffic."
 
-      # 5. Run Newman test suite headlessly and generate artifacts
-      - name: Execute Newman Test Automation Suite
+      # Step 5: Execute test suite headlessly via Newman
+      - name: Execute Newman Automation Tests
         run: |
+          # Create output directory for test reports
           mkdir -p reports
+          
+          # Run collection against local environment file
+          # Output is saved as 'index.html' so web servers / GitHub Pages render it as homepage
           npx newman run postman/collections/e2e-microservices.postman_collection.json \
             -e postman/environments/local.postman_environment.json \
             -r cli,htmlextra \
-            --reporter-htmlextra-export reports/test-report.html
+            --reporter-htmlextra-export reports/index.html
 
-      # 6. Upload the HTML dashboard as a build artifact (available even if tests fail)
+      # Step 6: Store report as a downloadable workflow artifact
+      # Runs regardless of test success or failure ('if: always()')
       - name: Upload HTML Test Report Artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: api-test-report
-          path: reports/test-report.html
+          path: reports/index.html
 
-      # 7. Tear down Docker containers cleanly
+      # Step 7: Publish live HTML report to GitHub Pages
+      # Only runs on the main branch so PR branches do not overwrite the live dashboard
+      - name: Deploy Report to GitHub Pages
+        if: github.ref == 'refs/heads/main' && always()
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./reports # Directory containing index.html
+
+      # Step 8: Clean up container resources
       - name: Tear Down Services
         if: always()
         run: docker compose down -v
