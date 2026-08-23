@@ -1,0 +1,58 @@
+name: API Microservices Regression CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  api-automation-test:
+    name: Build Services & Execute Newman Suite
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout the repository code
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 2. Set up Node.js runtime environment
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      # 3. Install framework dependencies (Newman & htmlextra reporter)
+      - name: Install Root Dependencies
+        run: npm ci || npm install
+
+      # 4. Spin up the multi-container cluster using Docker Compose
+      - name: Spin up Microservices Cluster (Docker Compose)
+        run: |
+          docker compose up --build -d
+          echo "Waiting for Gateway service to become healthy..."
+          timeout 30s bash -c 'until curl -sf http://localhost:8080/health; do sleep 1; done'
+          echo "Services are UP and responding on port 8080."
+
+      # 5. Run Newman test suite headlessly and generate artifacts
+      - name: Execute Newman Test Automation Suite
+        run: |
+          mkdir -p reports
+          npx newman run postman/collections/e2e-microservices.postman_collection.json \
+            -e postman/environments/local.postman_environment.json \
+            -r cli,htmlextra \
+            --reporter-htmlextra-export reports/test-report.html
+
+      # 6. Upload the HTML dashboard as a build artifact (available even if tests fail)
+      - name: Upload HTML Test Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-report
+          path: reports/test-report.html
+
+      # 7. Tear down Docker containers cleanly
+      - name: Tear Down Services
+        if: always()
+        run: docker compose down -v
