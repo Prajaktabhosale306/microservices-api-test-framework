@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "E2E Microservices Test Suite",
-    "description": "Production-grade automated test suite demonstrating dynamic JWT token handling, RFC 7807 contract validation, asynchronous workflow polling via setNextRequest, idempotency checks, and BOLA/IDOR security boundaries.",
+    "description": "Production-grade automated test suite demonstrating dynamic JWT token handling, RFC 7807 contract validation, asynchronous workflow polling via setNextRequest, idempotency checks, BOLA/IDOR security boundaries, and CSV/JSON Data-Driven Testing (DDT).",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -25,7 +25,6 @@
                   "    pm.expect(res).to.have.property('expires_in');",
                   "});",
                   "",
-                  "// Cache token and compute expiry unix epoch (subtract 5s buffer)",
                   "const expiryEpoch = Date.now() + ((res.expires_in - 5) * 1000);",
                   "pm.environment.set(\"authToken\", res.access_token);",
                   "pm.environment.set(\"tokenExpiryTimestamp\", expiryEpoch);"
@@ -95,7 +94,6 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "// Dynamic Trace & Correlation ID Injection",
                   "pm.variables.set(\"correlationId\", 'corr-' + pm.variables.replaceIn('{{$guid}}'));",
                   "pm.environment.set(\"pollRetryCount\", 0);"
                 ],
@@ -116,7 +114,6 @@
                   "    pm.expect(res).to.have.property(\"orderId\");",
                   "});",
                   "",
-                  "// Capture Order ID for subsequent lifecycle verification",
                   "pm.environment.set(\"currentOrderId\", res.orderId);"
                 ],
                 "type": "text/javascript"
@@ -168,7 +165,6 @@
                   "    pm.test(\"Trace Correlation ID propagated correctly\", function () {",
                   "        pm.expect(res.correlationId).to.eql(pm.variables.get(\"correlationId\"));",
                   "    });",
-                  "    // Reset next request to continue regular sequential flow",
                   "    pm.execution.setNextRequest(\"Validate Order JSON Schema Contract\");",
                   "}"
                 ],
@@ -211,7 +207,9 @@
                   "",
                   "pm.test(\"Order payload strictly complies with JSON Schema contract\", function () {",
                   "    pm.response.to.have.jsonSchema(orderSchema);",
-                  "});"
+                  "});",
+                  "",
+                  "pm.execution.setNextRequest(\"BOLA IDOR Check - User B Attempts Access to User A Order\");"
                 ],
                 "type": "text/javascript"
               }
@@ -305,7 +303,6 @@
               "listen": "prerequest",
               "script": {
                 "exec": [
-                  "// Generate static key to reuse for idempotency testing",
                   "if (!pm.environment.get(\"fixedIdempotencyKey\")) {",
                   "    pm.environment.set(\"fixedIdempotencyKey\", 'IDEMP-' + pm.variables.replaceIn('{{$guid}}'));",
                   "}"
@@ -346,6 +343,112 @@
               "raw": "{{baseUrl}}/api/v1/payments/charge",
               "host": ["{{baseUrl}}"],
               "path": ["api", "v1", "payments", "charge"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05_Data_Driven_Matrix",
+      "item": [
+        {
+          "name": "Execute Order Matrix (DDT)",
+          "event": [
+            {
+              "listen": "prerequest",
+              "script": {
+                "exec": [
+                  "const row = pm.iterationData.toObject();",
+                  "let reqPayload = null;",
+                  "let scenario = row.scenarioName || 'Manual Single Run';",
+                  "let expectedCode = parseInt(row.expectedStatusCode || '202', 10);",
+                  "let errorDetail = row.expectedErrorDetail || '';",
+                  "",
+                  "// Handle nested JSON or stringified payloads safely",
+                  "if (row.payload !== undefined && row.payload !== null) {",
+                  "    if (typeof row.payload === 'string') {",
+                  "        try {",
+                  "            reqPayload = JSON.parse(row.payload);",
+                  "        } catch (e) {",
+                  "            reqPayload = row.payload;",
+                  "        }",
+                  "    } else if (typeof row.payload === 'object') {",
+                  "        reqPayload = row.payload;",
+                  "    }",
+                  "}",
+                  "",
+                  "// Fallback for CSV row inputs",
+                  "if (!reqPayload) {",
+                  "    if (row.items !== undefined || row.totalAmount !== undefined) {",
+                  "        let itemsList = [];",
+                  "        if (row.items && typeof row.items === 'string' && row.items.trim().length > 0) {",
+                  "            itemsList = row.items.split(',').map(s => s.trim());",
+                  "        }",
+                  "        let parsedAmount = row.totalAmount;",
+                  "        if (!isNaN(row.totalAmount) && row.totalAmount !== '' && row.totalAmount !== null) {",
+                  "            parsedAmount = parseFloat(row.totalAmount);",
+                  "        }",
+                  "        reqPayload = { items: itemsList, totalAmount: parsedAmount };",
+                  "    } else {",
+                  "        reqPayload = { items: ['DEFAULT-SKU'], totalAmount: 100.00 };",
+                  "    }",
+                  "}",
+                  "",
+                  "// Update request body with the exact JSON object",
+                  "pm.request.body.update(JSON.stringify(reqPayload));",
+                  "pm.variables.set('scenarioName', scenario);",
+                  "pm.variables.set('expectedStatusCode', expectedCode);",
+                  "pm.variables.set('expectedErrorDetail', errorDetail);"
+                ],
+                "type": "text/javascript"
+              }
+            },
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const expCode = parseInt(pm.variables.get('expectedStatusCode'), 10);",
+                  "const scName = pm.variables.get('scenarioName');",
+                  "const expDetail = pm.variables.get('expectedErrorDetail');",
+                  "",
+                  "pm.test(`[${scName}] - Returns expected HTTP ${expCode}`, function () {",
+                  "    pm.response.to.have.status(expCode);",
+                  "});",
+                  "",
+                  "const resJson = pm.response.json();",
+                  "",
+                  "if (expCode === 202) {",
+                  "    pm.test(`[${scName}] - Positive order state is PROCESSING`, function () {",
+                  "        pm.expect(resJson.status).to.eql('PROCESSING');",
+                  "        pm.expect(resJson).to.have.property('orderId');",
+                  "    });",
+                  "} else {",
+                  "    pm.test(`[${scName}] - Negative payload returns RFC 7807 problem details`, function () {",
+                  "        pm.expect(resJson).to.have.property('detail');",
+                  "        if (expDetail && expDetail.trim().length > 0) {",
+                  "            pm.expect(resJson.detail).to.include(expDetail);",
+                  "        }",
+                  "    });",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{authToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/orders",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "v1", "orders"]
             }
           }
         }

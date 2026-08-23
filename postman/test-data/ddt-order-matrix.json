@@ -1,0 +1,55 @@
+[
+  {
+    "scenarioName": "Positive - Standard Valid Order",
+    "payload": {
+      "items": ["SKU-IPHONE-15", "SKU-CASE"],
+      "totalAmount": 1199.99
+    },
+    "expectedStatusCode": 202,
+    "expectedErrorDetail": ""
+  },
+  {
+    "scenarioName": "Boundary - Minimum Valid Total Amount ($0.01)",
+    "payload": {
+      "items": ["SKU-STICKER"],
+      "totalAmount": 0.01
+    },
+    "expectedStatusCode": 202,
+    "expectedErrorDetail": ""
+  },
+  {
+    "scenarioName": "Negative - Empty Items Array",
+    "payload": {
+      "items": [],
+      "totalAmount": 49.99
+    },
+    "expectedStatusCode": 422,
+    "expectedErrorDetail": "Invalid payload"
+  },
+  {
+    "scenarioName": "Negative - Missing Items Key",
+    "payload": {
+      "totalAmount": 150.00
+    },
+    "expectedStatusCode": 422,
+    "expectedErrorDetail": "Invalid payload"
+  },
+  {
+    "scenarioName": "Negative - Non-Numeric String Total Amount",
+    "payload": {
+      "items": ["SKU-LAPTOP"],
+      "totalAmount": "one-thousand-dollars"
+    },
+    "expectedStatusCode": 422,
+    "expectedErrorDetail": "Invalid payload"
+  },
+  {
+  "scenarioName": "Boundary/Negative - Zero Total Amount ($0.00)",
+  "payload": {
+    "items": ["SKU-FREE-SAMPLE"],
+    "totalAmount": 0
+  },
+  "expectedStatusCode": 422,
+  "expectedErrorDetail": "Invalid payload"
+ }
+]
