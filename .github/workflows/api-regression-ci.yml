@@ -1,14 +1,6 @@
 # ==============================================================================
 # GitHub Actions CI/CD Pipeline: Distributed API Test Regression, Load & Reporting
 # ==============================================================================
-# Workflow Lifecycle:
-#   1. Triggers on push or pull request to main/master branches.
-#   2. Spins up the microservices cluster (Gateway, Order, WireMock/Payment) via Docker Compose.
-#   3. Executes headless Postman tests using Newman CLI.
-#   4. Executes Grafana k6 load tests to benchmark latency budgets & throughput.
-#   5. Compiles interactive HTML reports via 'newman-reporter-htmlextra'.
-#   6. Automatically publishes the dashboard to GitHub Pages and stores artifacts.
-# ==============================================================================
 
 name: API Microservices Regression CI
 
@@ -29,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1: Pull repository code onto the runner
+      # Step 1: Pull repository code
       - name: Checkout Code
         uses: actions/checkout@v4
 
@@ -40,18 +32,13 @@ jobs:
           node-version: 20
           cache: 'npm'
 
-      # Step 3: Install root development tools (Newman CLI and Reporters)
+      # Step 3: Install root development tools
       - name: Install Framework Dependencies
         run: npm ci || npm install
 
-      # Step 4: Install Grafana k6 Load Testing Engine
-      - name: Install k6
-        run: |
-          sudo gpg -k
-          sudo gpg --no-default-keyring --keyring /usr/share/keyrings/k6-archive-keyring.gpg --keyserver hkp://keyserver.ubuntu.com:80 --recv-keys C5AD17C747E3415A3642D57D77C6C491D6AC1D69
-          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
-          sudo apt-get update
-          sudo apt-get install -y k6
+      # Step 4: Install Grafana k6 via official action (No GPG keyserver errors)
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
 
       # Step 5: Orchestrate microservice containers
       - name: Spin up Microservices Cluster (Docker Compose)
@@ -70,10 +57,9 @@ jobs:
             -r cli,htmlextra \
             --reporter-htmlextra-export reports/index.html
 
-      # Step 7: Execute k6 performance and load benchmark
+      # Step 7: Execute k6 performance benchmark
       - name: Execute k6 Load Benchmark
-        run: |
-          npm run test:load
+        run: npm run test:load
 
       # Step 8: Store Newman report as a downloadable workflow artifact
       - name: Upload HTML Test Report Artifact
