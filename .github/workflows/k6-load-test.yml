@@ -1,5 +1,4 @@
-cat << 'EOF' > .github/workflows/k6-load-test.yml
-name: Performance & Load SLA Benchmark
+name: "Performance & Load SLA Benchmark"
 
 on:
   workflow_dispatch:
@@ -56,4 +55,3 @@ jobs:
       - name: Clean Up Containers
         if: always()
         run: docker compose down -v
-EOF
