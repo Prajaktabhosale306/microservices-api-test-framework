@@ -1,6 +1,7 @@
 import http from 'k6/http';
 import { check, group, sleep } from 'k6';
 import { uuidv4 } from 'https://jslib.k6.io/k6-utils/1.4.0/index.js';
+import { htmlReport } from "https://raw.githubusercontent.com/benc-uk/k6-reporter/main/dist/bundle.js";
 
 // 1. Load Profile & Threshold Budgets (SLAs)
 export const options = {
@@ -112,4 +113,9 @@ export default function () {
 
   // Pacing between iterations per Virtual User
   sleep(1);
+}
+export function handleSummary(data) {
+  return {
+    "reports/k6-load-report.html": htmlReport(data),
+  };
 }
