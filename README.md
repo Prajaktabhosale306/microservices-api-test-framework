@@ -42,7 +42,7 @@ Explore the latest automated test execution report hosted on GitHub Pages:
 │  - RFC 7807 Error Specs │                       │ - State Capture         │
 └─────────────────────────┘                       └─────────────────────────┘
 
----
+```
 
 ## 🧪 Key Testing Competencies Demonstrated
 
@@ -150,7 +150,4 @@ This framework integrates a fully automated GitHub Actions pipeline (`api-regres
 4. **Headless Execution:** Runs Newman with `htmlextra` reporter.
 5. **Artifact Publishing:** Automatically publishes and deploys the report to **GitHub Pages**.
 6. **Clean Teardown:** Shuts down Docker containers cleanly upon completion.
-
-```
-
 ---

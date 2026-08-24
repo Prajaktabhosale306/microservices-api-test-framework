@@ -15,7 +15,6 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'HEALTHY', timestamp: new Date().toISOString() });
 });
 
-// Authentication endpoint
 app.post('/api/v1/auth/token', (req, res) => {
   const { username, userId, role } = req.body;
   if (!username || !userId) {
@@ -36,7 +35,6 @@ app.post('/api/v1/auth/token', (req, res) => {
   });
 });
 
-// JWT Verification Middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -64,7 +62,6 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// Proxy: Create Order
 app.post('/api/v1/orders', authenticateToken, async (req, res) => {
   try {
     const correlationId = req.headers['x-correlation-id'] || `corr-${uuidv4()}`;
@@ -88,7 +85,6 @@ app.post('/api/v1/orders', authenticateToken, async (req, res) => {
   }
 });
 
-// Proxy: Get Order by ID
 app.get('/api/v1/orders/:id', authenticateToken, async (req, res) => {
   try {
     const response = await axios.get(`${ORDER_SERVICE_URL}/orders/${req.params.id}`, {
@@ -109,17 +105,27 @@ app.get('/api/v1/orders/:id', authenticateToken, async (req, res) => {
   }
 });
 
-// Proxy: Process Payment
 app.post('/api/v1/payments/charge', authenticateToken, async (req, res) => {
   try {
-    const idempotencyKey = req.headers['x-idempotency-key'];
+    const idempotencyKey = req.headers['x-idempotency-key'] || req.headers['X-Idempotency-Key'];
+    const correlationId = req.headers['x-correlation-id'] || `corr-${uuidv4()}`;
+
+    const headersToSend = {
+      'Content-Type': 'application/json',
+      'x-user-id': req.user.userId,
+      'x-user-role': req.user.role,
+      'x-correlation-id': correlationId
+    };
+
+    if (idempotencyKey) {
+      headersToSend['x-idempotency-key'] = idempotencyKey;
+    }
+
     const response = await axios.post(`${PAYMENT_SERVICE_URL}/payments/charge`, req.body, {
-      headers: {
-        'x-idempotency-key': idempotencyKey,
-        'Content-Type': 'application/json'
-      },
+      headers: headersToSend,
       validateStatus: () => true
     });
+
     return res.status(response.status).json(response.data);
   } catch (error) {
     return res.status(502).json({

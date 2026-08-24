@@ -4,9 +4,9 @@
   "description": "",
   "main": "index.js",
     "scripts": {
-    "test:local": "newman run postman/collections/e2e-microservices.postman_collection.json -e postman/environments/local.postman_environment.json -r cli,htmlextra --reporter-htmlextra-export reports/test-report.html",
-    "test:ddt": "newman run postman/collections/e2e-microservices.postman_collection.json -e postman/environments/local.postman_environment.json -d postman/test-data/ddt-order-matrix.json --folder 01_Authentication --folder 05_Data_Driven_Matrix -r cli,htmlextra --reporter-htmlextra-export reports/ddt-report.html",
-        "test": "echo \"Error: no test specified\" && exit 1"
+      "test:local": "newman run postman/collections/e2e-microservices.postman_collection.json -e postman/environments/local.postman_environment.json -r cli,htmlextra --reporter-htmlextra-export reports/test-report.html",
+      "test:ddt": "newman run postman/collections/e2e-microservices.postman_collection.json -e postman/environments/local.postman_environment.json -d postman/test-data/ddt-order-matrix.json --folder 01_Authentication --folder 05_Data_Driven_Matrix -r cli,htmlextra --reporter-htmlextra-export reports/ddt-report.html",
+      "test:load": "k6 run performance/gateway-load-test.js"
   },
   "keywords": [],
   "author": "",
