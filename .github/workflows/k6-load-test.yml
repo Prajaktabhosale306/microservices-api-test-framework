@@ -1,0 +1,48 @@
+name: Performance & Load SLA Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: 'Number of Concurrent Virtual Users'
+        required: false
+        default: '20'
+      duration:
+        description: 'Steady Load Duration (e.g., 30s, 1m, 5m)'
+        required: false
+        default: '30s'
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  k6-load-benchmark:
+    name: Execute k6 Load Test Battery
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install Dependencies
+        run: npm ci || npm install
+
+      - name: Setup k6
+        uses: grafana/setup-k6-action@v1
+
+      - name: Spin up Microservices Cluster
+        run: |
+          docker compose up --build -d
+          timeout 30s bash -c 'until curl -sf http://localhost:8080/health; do sleep 1; done'
+
+      - name: Execute k6 Load Benchmark
+        run: npm run test:load
+
+      - name: Clean Up Containers
+        if: always()
+        run: docker compose down -v
